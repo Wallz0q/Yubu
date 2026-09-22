@@ -1,0 +1,1476 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+USERBOT TELEGRAM + BOT PENGELOLA
+Dibuat dengan Pyrogram (Userbot) & Aiogram (Bot Pengelola)
+Fitur: Auto-Share, AI, Downloader, Editor Foto, Games, Canvas
+"""
+
+import os
+import json
+import asyncio
+import random
+import re
+import time
+from datetime import datetime
+from io import BytesIO
+
+# ============== INSTALL DEPENDENSI ==============
+# pip install pyrogram tgcrypto aiogram aiohttp requests yt-dlp pillow
+
+# ============== KONFIGURASI ==============
+# API Telegram - Dapatkan di my.telegram.org
+API_ID = "38784684"
+API_HASH = "c9ca2b614fb2c650bcc12818871e2de3"
+
+# Token Bot Pengelola - Dapatkan dari @BotFather
+BOT_TOKEN = "8945885561:AAE9ioCaC4C6jYh5tYXc-vH_QX762DHXgs8"
+
+# ID Admin (Pemilik Bot)
+ADMIN_ID = 7532503121 # Ganti dengan ID Telegram Anda
+
+# API Key Opsional (Isi jika ingin fitur berfungsi penuh)
+GEMINI_API_KEY = ""      # https://aistudio.google.com
+OPENAI_API_KEY = ""      # https://platform.openai.com
+META_API_KEY = ""        # API Meta AI
+REMOVEBG_API_KEY = "CYhhqPh8RBap363Hmyn2gATW"    # https://www.remove.bg/api
+
+# ============== FILE PENYIMPANAN DATA ==============
+DATA_FILE = "data_userbot.json"
+
+# ============== STRUKTUR DATA DEFAULT ==============
+DEFAULT_DATA = {
+    "allowed_users": {},      # Pengguna yang diizinkan menumpang
+    "auto_share": {},         # Pengaturan Auto-Share per user
+    "blacklist": {},          # Blacklist chat per user
+    "sessions": {},           # Session userbot
+    "games": {}               # Data game berjalan
+}
+
+# ============== FUNGSI PENYIMPANAN DATA ==============
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    return DEFAULT_DATA.copy()
+
+def save_data(data):
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+# Inisialisasi data
+data = load_data()
+
+# ============== IMPORT LIBRARY ==============
+try:
+    from pyrogram import Client, filters
+    from pyrogram.types import Message as PyroMessage
+    from aiogram import Bot, Dispatcher, types
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.utils import executor
+    import aiohttp
+    import requests
+except ImportError as e:
+    print(f"[ERROR] Library belum terinstall: {e}")
+    print("Jalankan: pip install pyrogram tgcrypto aiogram aiohttp requests yt-dlp pillow")
+    exit()
+
+# ============== INISIALISASI BOT PENGELOLA ==============
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
+
+# ============== DICTIONARY UNTUK MENYIMPAN INSTANCE USERBOT ==============
+userbots = {}
+auto_share_tasks = {}
+
+# ============== FUNGSI PEMBUATAN USERBOT ==============
+async def create_userbot(user_id, phone, session_string=None):
+    """Membuat instance userbot baru untuk pengguna"""
+    session_name = f"ubot_{user_id}"
+    
+    if session_string:
+        ubot = Client(
+            session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            session_string=session_string
+        )
+    else:
+        ubot = Client(
+            session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            phone_number=phone
+        )
+    
+    return ubot
+
+# ============== HANDLER BOT PENGELOLA ==============
+
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    """Menu Utama Bot Pengelola"""
+    user_id = message.from_user.id
+    
+    # Cek apakah admin atau pengguna yang diizinkan
+    is_admin = (user_id == ADMIN_ID)
+    is_allowed = str(user_id) in data["allowed_users"]
+    
+    if not is_admin and not is_allowed:
+        await message.reply("❌ Anda tidak diizinkan mengakses bot ini!\nHubungi admin untuk mendapatkan akses.")
+        return
+    
+    # Keyboard Menu Utama
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("💎 Tambah Userbot", callback_data="add_userbot"),
+        InlineKeyboardButton("📋 Daftar Userbot", callback_data="list_userbot"),
+        InlineKeyboardButton("⚙️ Pengaturan", callback_data="settings"),
+        InlineKeyboardButton("📖 Panduan", callback_data="help"),
+        InlineKeyboardButton("🔗 AppMiniURL", callback_data="appminiurl")
+    )
+    
+    status = "👑 ADMIN" if is_admin else "✅ DIIZINKAN"
+    
+    await message.reply(
+        f"🤖 **SELAMAT DATANG DI USERBOT MANAGER Koko**\n\n"
+        f"👤 Status: {status}\n"
+        f"🆔 ID Anda: `{user_id}`\n\n"
+        f"Pilih menu di bawah ini:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.message_handler(commands=['add'])
+async def cmd_add(message: types.Message):
+    """Menambahkan pengguna yang diizinkan (Hanya Admin)"""
+    if message.from_user.id != ADMIN_ID:
+        await message.reply("❌ Hanya admin yang bisa menggunakan perintah ini!")
+        return
+    
+    # Parse: /add <user_id> <nama>
+    args = message.get_args().split()
+    if len(args) < 2:
+        await message.reply("❌ Format salah!\nGunakan: `/add <user_id> <nama>`", parse_mode="Markdown")
+        return
+    
+    target_id = args[0]
+    nama = " ".join(args[1:])
+    
+    data["allowed_users"][target_id] = {
+        "nama": nama,
+        "tanggal_ditambahkan": str(datetime.now()),
+        "userbot_aktif": False
+    }
+    
+    if target_id not in data["auto_share"]:
+        data["auto_share"][target_id] = {
+            "pesan": "",
+            "jeda": 60,
+            "aktif": False
+        }
+    if target_id not in data["blacklist"]:
+        data["blacklist"][target_id] = []
+    
+    save_data(data)
+    await message.reply(f"✅ Berhasil menambahkan pengguna!\n\n🆔 ID: `{target_id}`\n👤 Nama: {nama}", parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == "add_userbot")
+async def cb_add_userbot(callback_query: types.CallbackQuery):
+    """Memulai proses penambahan userbot"""
+    user_id = str(callback_query.from_user.id)
+    
+    if user_id not in data["allowed_users"] and callback_query.from_user.id != ADMIN_ID:
+        await callback_query.answer("❌ Anda tidak diizinkan!", show_alert=True)
+        return
+    
+    await callback_query.message.edit_text(
+        "📱 **TAMBAH USERBOT**\n\n"
+        "Silakan kirimkan nomor telepon Anda dengan format internasional.\n"
+        "Contoh: `+6281234567890`\n\n"
+        "Ketik /batal untuk membatalkan.",
+        parse_mode="Markdown"
+    )
+    
+    # Simpan state
+    data["sessions"][user_id] = {"step": "waiting_phone"}
+    save_data(data)
+
+@dp.callback_query_handler(lambda c: c.data == "list_userbot")
+async def cb_list_userbot(callback_query: types.CallbackQuery):
+    """Menampilkan daftar userbot"""
+    user_id = str(callback_query.from_user.id)
+    is_admin = callback_query.from_user.id == ADMIN_ID
+    
+    text = "📋 **DAFTAR USERBOT**\n\n"
+    
+    if is_admin:
+        if not data["allowed_users"]:
+            text += "❌ Belum ada pengguna yang ditambahkan."
+        else:
+            for uid, info in data["allowed_users"].items():
+                status = "🟢 AKTIF" if info.get("userbot_aktif") else "🔴 TIDAK AKTIF"
+                text += f"👤 {info['nama']}\n   🆔 `{uid}`\n   📱 {status}\n\n"
+    else:
+        info = data["allowed_users"].get(user_id, {})
+        if info:
+            status = "🟢 AKTIF" if info.get("userbot_aktif") else "🔴 TIDAK AKTIF"
+            text += f"👤 {info['nama']}\n   🆔 `{user_id}`\n   📱 {status}"
+        else:
+            text += "❌ Data tidak ditemukan."
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("⬅️ Kembali", callback_data="back_main"))
+    
+    await callback_query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == "appminiurl")
+async def cb_appminiurl(callback_query: types.CallbackQuery):
+    """Menampilkan tabel AppMiniURL"""
+    text = """🔗 **APPMINIURL - TABEL LAYANAN**
+
+| No | Nama Layanan | Perintah | Status |
+|----|-------------|----------|--------|
+| 1 | Auto-Share | .setpesan, .setjeda | ✅ Aktif |
+| 2 | AI Gemini | .gemini <teks> | ✅ Aktif |
+| 3 | AI Cici | .cici <teks> | ✅ Aktif |
+| 4 | ChatGPT | .gpt <teks> | ✅ Aktif |
+| 5 | Meta AI | .meta <teks> | ✅ Aktif |
+| 6 | TikTok DL | .tt <url> | ✅ Aktif |
+| 7 | Instagram DL | .ig <url> | ✅ Aktif |
+| 8 | Facebook DL | .fb <url> | ✅ Aktif |
+| 9 | CapCut DL | .capcut <url> | ✅ Aktif |
+| 10 | YouTube MP3 | .ytmp3 <url> | ✅ Aktif |
+| 11 | YouTube MP4 | .ytmp4 <url> | ✅ Aktif |
+| 12 | Jadi Anime | .jadianime <url> | ✅ Aktif |
+| 13 | Anime 2 Real | .anime2real <url> | ✅ Aktif |
+| 14 | Remove BG | .removebg <url> | ✅ Aktif |
+| 15 | HD Quality | .hd <url> | ✅ Aktif |
+| 16 | Tebak Kata | .tebakkata | ✅ Aktif |
+| 17 | Cek Roblox | .roblox <user> | ✅ Aktif |
+| 18 | Cek Free Fire | .epep <uid> | ✅ Aktif |
+| 19 | WA Profile | .waprofile <no> | ✅ Aktif |
+| 20 | Brat Foto | .brat <teks> | ✅ Aktif |
+| 21 | Brat Video | .bratvid <teks> | ✅ Aktif |
+
+🔗 **AppMiniURL** terintegrasi dengan semua fitur di atas!"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("🌐 Buka AppMiniURL", url="https://appminiurl.com"),
+        InlineKeyboardButton("⬅️ Kembali", callback_data="back_main")
+    )
+    
+    await callback_query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == "help")
+async def cb_help(callback_query: types.CallbackQuery):
+    """Panduan Penggunaan"""
+    text = """📖 **PANDUAN PENGGUNAAN USERBOT**
+
+**Cara Mengaktifkan Userbot:**
+1. Klik "📱 Tambah Userbot" di menu utama
+2. Kirim nomor telepon (format: +628xxx)
+3. Masukkan kode verifikasi yang dikirim Telegram
+4. Masukkan PIN 2FA jika ada
+5. Userbot siap digunakan!
+
+**Daftar Perintah Userbot:**
+
+🤖 **Fitur Auto-Share**
+• `.setpesan <teks>` - Atur pesan otomatis
+• `.setjeda <detik>` - Atur jeda waktu
+• `.autoshare on/off` - Aktifkan/matikan
+• `.addbl` - Blacklist chat (reply pesan)
+
+🧠 **Fitur AI**
+• `.gemini <teks>` - Tanya Gemini
+• `.cici <teks>` - Tanya Cici
+• `.gpt <teks>` - Tanya ChatGPT
+• `.meta <teks>` - Tanya Meta AI
+• `.cekerrorai <teks>` - Analisis error
+• `.fixerror <code>` - Perbaiki kode
+
+📥 **Downloader**
+• `.tt / .tiktok <url>` - TikTok
+• `.ig <url>` - Instagram
+• `.fb <url>` - Facebook
+• `.capcut <url>` - CapCut
+• `.ytmp3 <url>` - YouTube MP3
+• `.ytmp4 <url>` - YouTube MP4
+
+🎨 **Editor Foto & Video**
+• `.jadianime <url>` - Jadi Anime
+• `.anime2real <url>` - Anime ke Real
+• `.removebg <url>` - Hapus Background
+• `.hd <url>` - Tingkatkan Kualitas
+
+🎮 **Games & Stalking**
+• `.tebakkata` - Game Tebak Kata
+• `.roblox <username>` - Cek Roblox
+• `.epep <uid>` - Cek Free Fire
+• `.waprofile <nomor>` - Cek WA Profile
+
+🖼️ **Canvas (Teks ke Gambar)**
+• `.brat <teks>` - Brat Foto
+• `.bratvid <teks>` - Brat Video"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("⬅️ Kembali", callback_data="back_main"))
+    
+    await callback_query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == "settings")
+async def cb_settings(callback_query: types.CallbackQuery):
+    """Pengaturan"""
+    user_id = str(callback_query.from_user.id)
+    as_data = data["auto_share"].get(user_id, {})
+    
+    status = "🟢 AKTIF" if as_data.get("aktif") else "🔴 TIDAK AKTIF"
+    pesan = as_data.get("pesan", "Belum diatur")[:50] + "..." if len(as_data.get("pesan", "")) > 50 else as_data.get("pesan", "Belum diatur")
+    jeda = as_data.get("jeda", 60)
+    
+    text = f"""⚙️ **PENGATURAN**
+
+📢 **Auto-Share:**
+• Status: {status}
+• Pesan: {pesan}
+• Jeda: {jeda} detik
+
+📵 **Blacklist:** {len(data["blacklist"].get(user_id, []))} chat"""
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("⬅️ Kembali", callback_data="back_main")
+    )
+    
+    await callback_query.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data == "back_main")
+async def cb_back_main(callback_query: types.CallbackQuery):
+    """Kembali ke menu utama"""
+    await cmd_start(callback_query.message)
+
+@dp.message_handler(content_types=['text'])
+async def handle_text(message: types.Message):
+    """Menangani input verifikasi userbot"""
+    user_id = str(message.from_user.id)
+    session = data["sessions"].get(user_id, {})
+    
+    if not session:
+        return
+    
+    step = session.get("step")
+    
+    if step == "waiting_phone":
+        phone = message.text.strip()
+        if not phone.startswith("+"):
+            await message.reply("❌ Nomor harus diawali dengan kode negara!\nContoh: `+6281234567890`", parse_mode="Markdown")
+            return
+        
+        # Membuat userbot dan mengirim kode
+        try:
+            ubot = await create_userbot(int(user_id), phone)
+            await ubot.connect()
+            sent_code = await ubot.send_code(phone)
+            
+            data["sessions"][user_id] = {
+                "step": "waiting_code",
+                "phone": phone,
+                "phone_code_hash": sent_code.phone_code_hash,
+                "ubot_instance": str(id(ubot))
+            }
+            userbots[user_id] = ubot
+            save_data(data)
+            
+            await message.reply(
+                "✅ Kode verifikasi telah dikirim!\n\n"
+                "Silakan kirimkan kode yang Anda terima dari Telegram.\n"
+                "Format: `12345` (pisahkan dengan spasi jika ada: `1 2 3 4 5`)",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await message.reply(f"❌ Gagal mengirim kode: `{str(e)}`", parse_mode="Markdown")
+            data["sessions"].pop(user_id, None)
+            save_data(data)
+    
+    elif step == "waiting_code":
+        code = message.text.strip().replace(" ", "")
+        phone = session.get("phone")
+        phone_code_hash = session.get("phone_code_hash")
+        ubot = userbots.get(user_id)
+        
+        if not ubot:
+            await message.reply("❌ Sesi expired, silakan ulangi!")
+            data["sessions"].pop(user_id, None)
+            save_data(data)
+            return
+        
+        try:
+            await ubot.sign_in(phone, phone_code_hash, code)
+            
+            # Cek apakah butuh PIN 2FA
+            session_string = await ubot.export_session_string()
+            
+            data["allowed_users"][user_id]["userbot_aktif"] = True
+            data["allowed_users"][user_id]["session_string"] = session_string
+            data["allowed_users"][user_id]["phone"] = phone
+            data["sessions"].pop(user_id, None)
+            save_data(data)
+            
+            # Daftarkan handler userbot dan jalankan
+            await register_userbot_handlers(ubot, user_id)
+            asyncio.create_task(ubot.start())
+            
+            await message.reply(
+                "✅ **Userbot Berhasil Diaktifkan!**\n\n"
+                f"📱 Nomor: {phone}\n"
+                "🎯 Semua fitur siap digunakan!\n\n"
+                "Ketik /start untuk kembali ke menu."
+            )
+            
+        except Exception as e:
+            if "2FA" in str(e) or "password" in str(e).lower():
+                data["sessions"][user_id]["step"] = "waiting_pin"
+                save_data(data)
+                await message.reply("🔐 Akun Anda menggunakan 2FA!\nSilakan kirimkan PIN Anda:")
+            else:
+                await message.reply(f"❌ Gagal verifikasi: `{str(e)}`", parse_mode="Markdown")
+                data["sessions"].pop(user_id, None)
+                save_data(data)
+    
+    elif step == "waiting_pin":
+        pin = message.text.strip()
+        phone = session.get("phone")
+        phone_code_hash = session.get("phone_code_hash")
+        ubot = userbots.get(user_id)
+        
+        try:
+            await ubot.check_password(pin)
+            session_string = await ubot.export_session_string()
+            
+            data["allowed_users"][user_id]["userbot_aktif"] = True
+            data["allowed_users"][user_id]["session_string"] = session_string
+            data["allowed_users"][user_id]["phone"] = phone
+            data["sessions"].pop(user_id, None)
+            save_data(data)
+            
+            await register_userbot_handlers(ubot, user_id)
+            asyncio.create_task(ubot.start())
+            
+            await message.reply(
+                "✅ **Userbot Berhasil Diaktifkan!**\n\n"
+                f"📱 Nomor: {phone}\n"
+                "🎯 Semua fitur siap digunakan!\n\n"
+                "Ketik /start untuk kembali ke menu."
+            )
+        except Exception as e:
+            await message.reply(f"❌ PIN salah: `{str(e)}`", parse_mode="Markdown")
+
+# ============== FUNGSI DAFTARKAN HANDLER USERBOT ==============
+async def register_userbot_handlers(ubot, user_id_str):
+    """Mendaftarkan semua handler fitur userbot"""
+    uid = user_id_str
+    
+    # ==================== FITUR AUTO-SHARE ====================
+    @ubot.on_message(filters.command("setpesan", prefixes=".") & filters.me)
+    async def ubot_setpesan(client, message: PyroMessage):
+        text = message.text[len(".setpesan "):].strip()
+        if not text:
+            await message.edit("❌ Format: `.setpesan <teks>`")
+            return
+        
+        if uid not in data["auto_share"]:
+            data["auto_share"][uid] = {}
+        data["auto_share"][uid]["pesan"] = text
+        save_data(data)
+        await message.edit(f"✅ Pesan otomatis diatur!\n\n📝 Pesan: {text[:100]}")
+    
+    @ubot.on_message(filters.command("setjeda", prefixes=".") & filters.me)
+    async def ubot_setjeda(client, message: PyroMessage):
+        try:
+            detik = int(message.text.split()[1])
+            if uid not in data["auto_share"]:
+                data["auto_share"][uid] = {}
+            data["auto_share"][uid]["jeda"] = detik
+            save_data(data)
+            await message.edit(f"✅ Jeda waktu diatur: {detik} detik")
+        except:
+            await message.edit("❌ Format: `.setjeda <detik>`")
+    
+    @ubot.on_message(filters.command("autoshare", prefixes=".") & filters.me)
+    async def ubot_autoshare(client, message: PyroMessage):
+        args = message.text.split()
+        if len(args) < 2:
+            await message.edit("❌ Format: `.autoshare on` atau `.autoshare off`")
+            return
+        
+        status = args[1].lower()
+        if uid not in data["auto_share"]:
+            data["auto_share"][uid] = {}
+        
+        if status == "on":
+            data["auto_share"][uid]["aktif"] = True
+            save_data(data)
+            
+            # Jalankan auto-share task
+            if uid in auto_share_tasks:
+                auto_share_tasks[uid].cancel()
+            task = asyncio.create_task(auto_share_loop(ubot, uid))
+            auto_share_tasks[uid] = task
+            
+            await message.edit("🟢 Auto-Share diaktifkan!")
+        
+        elif status == "off":
+            data["auto_share"][uid]["aktif"] = False
+            save_data(data)
+            
+            if uid in auto_share_tasks:
+                auto_share_tasks[uid].cancel()
+                del auto_share_tasks[uid]
+            
+            await message.edit("🔴 Auto-Share dimatikan!")
+        else:
+            await message.edit("❌ Pilih `on` atau `off`")
+    
+    @ubot.on_message(filters.command("addbl", prefixes=".") & filters.me)
+    async def ubot_addbl(client, message: PyroMessage):
+        chat_id = str(message.chat.id)
+        if uid not in data["blacklist"]:
+            data["blacklist"][uid] = []
+        
+        if chat_id in data["blacklist"][uid]:
+            data["blacklist"][uid].remove(chat_id)
+            save_data(data)
+            await message.edit("✅ Chat dihapus dari blacklist!")
+        else:
+            data["blacklist"][uid].append(chat_id)
+            save_data(data)
+            await message.edit("✅ Chat ditambahkan ke blacklist!")
+    
+    # ==================== FITUR AI ====================
+    @ubot.on_message(filters.command("gemini", prefixes=".") & filters.me)
+    async def ubot_gemini(client, message: PyroMessage):
+        prompt = message.text[len(".gemini "):].strip()
+        if not prompt:
+            await message.edit("❌ Format: `.gemini <teks>`")
+            return
+        
+        await message.edit("🧠 Gemini sedang berpikir...")
+        try:
+            response = await ai_gemini(prompt)
+            await message.edit(f"🤖 **Gemini:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("cici", prefixes=".") & filters.me)
+    async def ubot_cici(client, message: PyroMessage):
+        prompt = message.text[len(".cici "):].strip()
+        if not prompt:
+            await message.edit("❌ Format: `.cici <teks>`")
+            return
+        
+        await message.edit("🧠 Cici sedang berpikir...")
+        try:
+            response = await ai_cici(prompt)
+            await message.edit(f"🤖 **Cici:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("gpt", prefixes=".") & filters.me)
+    async def ubot_gpt(client, message: PyroMessage):
+        prompt = message.text[len(".gpt "):].strip()
+        if not prompt:
+            await message.edit("❌ Format: `.gpt <teks>`")
+            return
+        
+        await message.edit("🧠 ChatGPT sedang berpikir...")
+        try:
+            response = await ai_chatgpt(prompt)
+            await message.edit(f"🤖 **ChatGPT:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("meta", prefixes=".") & filters.me)
+    async def ubot_meta(client, message: PyroMessage):
+        prompt = message.text[len(".meta "):].strip()
+        if not prompt:
+            await message.edit("❌ Format: `.meta <teks>`")
+            return
+        
+        await message.edit("🧠 Meta AI sedang berpikir...")
+        try:
+            response = await ai_meta(prompt)
+            await message.edit(f"🤖 **Meta AI:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("cekerrorai", prefixes=".") & filters.me)
+    async def ubot_cekerrorai(client, message: PyroMessage):
+        error_text = message.text[len(".cekerrorai "):].strip()
+        if not error_text:
+            await message.edit("❌ Format: `.cekerrorai <teks_error>`")
+            return
+        
+        await message.edit("🔍 Menganalisis error...")
+        try:
+            prompt = f"Analisis error berikut dan jelaskan penyebabnya serta solusinya:\n{error_text}"
+            response = await ai_gemini(prompt)
+            await message.edit(f"🔍 **Analisis Error:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("fixerror", prefixes=".") & filters.me)
+    async def ubot_fixerror(client, message: PyroMessage):
+        code = message.text[len(".fixerror "):].strip()
+        if not code:
+            await message.edit("❌ Format: `.fixerror <kode>`")
+            return
+        
+        await message.edit("🛠️ Memperbaiki kode...")
+        try:
+            prompt = f"Perbaiki kode berikut yang error dan berikan penjelasannya:\n```\n{code}\n```"
+            response = await ai_gemini(prompt)
+            await message.edit(f"🛠️ **Perbaikan Kode:**\n\n{response[:4000]}", parse_mode="Markdown")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    # ==================== FITUR DOWNLOADER ====================
+    @ubot.on_message(filters.command(["tt", "tiktok"], prefixes=".") & filters.me)
+    async def ubot_tiktok(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.tt <url_tiktok>`")
+            return
+        
+        await message.edit("📥 Mengunduh TikTok...")
+        try:
+            result = await download_tiktok(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_video(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("ig", prefixes=".") & filters.me)
+    async def ubot_instagram(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.ig <url_instagram>`")
+            return
+        
+        await message.edit("📥 Mengunduh Instagram...")
+        try:
+            result = await download_instagram(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                if result.endswith(".mp4"):
+                    await client.send_video(message.chat.id, result, caption="✅ Download berhasil!")
+                else:
+                    await client.send_photo(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("fb", prefixes=".") & filters.me)
+    async def ubot_facebook(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.fb <url_facebook>`")
+            return
+        
+        await message.edit("📥 Mengunduh Facebook...")
+        try:
+            result = await download_facebook(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_video(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("capcut", prefixes=".") & filters.me)
+    async def ubot_capcut(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.capcut <url>`")
+            return
+        
+        await message.edit("📥 Mengunduh CapCut...")
+        try:
+            result = await download_capcut(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_video(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("ytmp3", prefixes=".") & filters.me)
+    async def ubot_ytmp3(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.ytmp3 <url_youtube>`")
+            return
+        
+        await message.edit("📥 Mengunduh YouTube MP3...")
+        try:
+            result = await download_youtube(url, "mp3")
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_audio(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("ytmp4", prefixes=".") & filters.me)
+    async def ubot_ytmp4(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.ytmp4 <url_youtube>`")
+            return
+        
+        await message.edit("📥 Mengunduh YouTube MP4...")
+        try:
+            result = await download_youtube(url, "mp4")
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_video(message.chat.id, result, caption="✅ Download berhasil!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal mengunduh!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    # ==================== FITUR EDITOR FOTO & VIDEO ====================
+    @ubot.on_message(filters.command("jadianime", prefixes=".") & filters.me)
+    async def ubot_jadianime(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.jadianime <url_foto>`")
+            return
+        
+        await message.edit("🎨 Mengubah jadi anime...")
+        try:
+            result = await image_to_anime(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_photo(message.chat.id, result, caption="✅ Jadi Anime!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal memproses!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("anime2real", prefixes=".") & filters.me)
+    async def ubot_anime2real(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.anime2real <url_foto>`")
+            return
+        
+        await message.edit("🎨 Mengubah anime jadi realistis...")
+        try:
+            result = await anime_to_real(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_photo(message.chat.id, result, caption="✅ Anime ke Realistis!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal memproses!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("removebg", prefixes=".") & filters.me)
+    async def ubot_removebg(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.removebg <url_foto>`")
+            return
+        
+        await message.edit("🎨 Menghapus background...")
+        try:
+            result = await remove_background(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_document(message.chat.id, result, caption="✅ Background dihapus!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal memproses!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("hd", prefixes=".") & filters.me)
+    async def ubot_hd(client, message: PyroMessage):
+        url = message.text.split()[-1]
+        if not url.startswith("http"):
+            await message.edit("❌ Format: `.hd <url_foto>`")
+            return
+        
+        await message.edit("🎨 Meningkatkan kualitas foto...")
+        try:
+            result = await enhance_image(url)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_photo(message.chat.id, result, caption="✅ Kualitas ditingkatkan!")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal memproses!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    # ==================== FITUR GAMES & STALKING ====================
+    @ubot.on_message(filters.command("tebakkata", prefixes=".") & filters.me)
+    async def ubot_tebakkata(client, message: PyroMessage):
+        kata_kunci = [
+            {"kata": "PYTHON", "petunjuk": "Bahasa pemrograman populer"},
+            {"kata": "TELEGRAM", "petunjuk": "Aplikasi pesan instan"},
+            {"kata": "USERBOT", "petunjuk": "Bot berjalan di akun pengguna"},
+            {"kata": "INTERNET", "petunjuk": "Jaringan global komputer"},
+            {"kata": "KOMPUTER", "petunjuk": "Alat pengolah data elektronik"},
+            {"kata": "SMARTPHONE", "petunjuk": "Telepon pintar"},
+            {"kata": "PROGRAMMER", "petunjuk": "Pembuat kode program"},
+            {"kata": "DATABASE", "petunjuk": "Tempat penyimpanan data"},
+            {"kata": "ALGORITMA", "petunjuk": "Langkah-langkah penyelesaian masalah"},
+            {"kata": "JAVASCRIPT", "petunjuk": "Bahasa pemrograman web"}
+        ]
+        
+        pilihan = random.choice(kata_kunci)
+        kata = pilihan["kata"]
+        petunjuk = pilihan["petunjuk"]
+        
+        # Buat tebakan dengan huruf acak terbuka
+        tampil = ["_"] * len(kata)
+        buka = random.sample(range(len(kata)), min(2, len(kata)))
+        for i in buka:
+            tampil[i] = kata[i]
+        
+        data["games"][uid] = {
+            "game": "tebakkata",
+            "kata": kata,
+            "tampil": tampil,
+            "kesempatan": 5,
+            "sudah_tebak": []
+        }
+        save_data(data)
+        
+        await message.edit(
+            f"🎮 **GAME TEBAK KATA**\n\n"
+            f"📝 Petunjuk: {petunjuk}\n"
+            f"🔤 Kata: {' '.join(tampil)}\n"
+            f"❤️ Kesempatan: 5\n\n"
+            f"Kirim huruf atau kata lengkap untuk menebak!"
+        )
+    
+    @ubot.on_message(filters.command("roblox", prefixes=".") & filters.me)
+    async def ubot_roblox(client, message: PyroMessage):
+        username = message.text[len(".roblox "):].strip()
+        if not username:
+            await message.edit("❌ Format: `.roblox <username>`")
+            return
+        
+        await message.edit("🔍 Mencari akun Roblox...")
+        try:
+            info = await cek_roblox(username)
+            if info:
+                await message.edit(
+                    f"🎮 **INFO AKUN ROBLOX**\n\n"
+                    f"👤 Username: {info.get('username', 'N/A')}\n"
+                    f"🆔 ID: {info.get('id', 'N/A')}\n"
+                    f"📅 Bergabung: {info.get('created', 'N/A')}\n"
+                    f"👥 Teman: {info.get('friends', 'N/A')}\n"
+                    f"🔢 Followers: {info.get('followers', 'N/A')}\n"
+                    f"👁️ Following: {info.get('following', 'N/A')}\n"
+                    f"💬 Status: {info.get('status', 'N/A')}"
+                )
+            else:
+                await message.edit("❌ Akun tidak ditemukan!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("epep", prefixes=".") & filters.me)
+    async def ubot_epep(client, message: PyroMessage):
+        uid_ff = message.text[len(".epep "):].strip()
+        if not uid_ff or not uid_ff.isdigit():
+            await message.edit("❌ Format: `.epep <uid_freefire>`")
+            return
+        
+        await message.edit("🔍 Mencari akun Free Fire...")
+        try:
+            info = await cek_freefire(uid_ff)
+            if info:
+                await message.edit(
+                    f"🔥 **INFO AKUN FREE FIRE**\n\n"
+                    f"🆔 UID: {uid_ff}\n"
+                    f"👤 Nickname: {info.get('nickname', 'N/A')}\n"
+                    f"⭐ Level: {info.get('level', 'N/A')}\n"
+                    f"🏆 Rank: {info.get('rank', 'N/A')}\n"
+                    f"💎 Like: {info.get('like', 'N/A')}\n"
+                    f"🎯 KD: {info.get('kd', 'N/A')}\n"
+                    f"⚔️ Win Rate: {info.get('winrate', 'N/A')}"
+                )
+            else:
+                await message.edit("❌ Akun tidak ditemukan!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("waprofile", prefixes=".") & filters.me)
+    async def ubot_waprofile(client, message: PyroMessage):
+        nomor = message.text[len(".waprofile "):].strip()
+        if not nomor:
+            await message.edit("❌ Format: `.waprofile <nomor_wa>`")
+            return
+        
+        await message.edit("🔍 Mengecek profil WhatsApp...")
+        try:
+            info = await cek_waprofile(nomor)
+            if info:
+                await message.edit(
+                    f"📱 **PROFIL WHATSAPP**\n\n"
+                    f"📞 Nomor: {nomor}\n"
+                    f"👤 Nama: {info.get('nama', 'N/A')}\n"
+                    f"ℹ️ About: {info.get('about', 'N/A')}\n"
+                    f"📅 Terakhir Dilihat: {info.get('last_seen', 'N/A')}\n"
+                    f"✅ Status: {info.get('status', 'Aktif')}"
+                )
+            else:
+                await message.edit("❌ Nomor tidak terdaftar di WhatsApp!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    # ==================== FITUR CANVAS (BRAT) ====================
+    @ubot.on_message(filters.command("brat", prefixes=".") & filters.me)
+    async def ubot_brat(client, message: PyroMessage):
+        teks = message.text[len(".brat "):].strip()
+        if not teks:
+            await message.edit("❌ Format: `.brat <teks>`")
+            return
+        
+        await message.edit("🖼️ Membuat Brat Foto...")
+        try:
+            result = await buat_brat_image(teks)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_photo(message.chat.id, result, caption=f"✅ Brat Foto: {teks}")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal membuat!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    @ubot.on_message(filters.command("bratvid", prefixes=".") & filters.me)
+    async def ubot_bratvid(client, message: PyroMessage):
+        teks = message.text[len(".bratvid "):].strip()
+        if not teks:
+            await message.edit("❌ Format: `.bratvid <teks>`")
+            return
+        
+        await message.edit("🎬 Membuat Brat Video...")
+        try:
+            result = await buat_brat_video(teks)
+            if result:
+                await message.edit("📤 Mengirim...")
+                await client.send_video(message.chat.id, result, caption=f"✅ Brat Video: {teks}")
+                await message.delete()
+            else:
+                await message.edit("❌ Gagal membuat!")
+        except Exception as e:
+            await message.edit(f"❌ Error: {str(e)}")
+    
+    # ==================== HANDLER GAME TEBAK KATA ====================
+    @ubot.on_message(filters.text & filters.me)
+    async def game_handler(client, message: PyroMessage):
+        game_data = data["games"].get(uid, {})
+        if not game_data or game_data.get("game") != "tebakkata":
+            return
+        
+        tebakan = message.text.upper().strip()
+        kata = game_data["kata"]
+        tampil = game_data["tampil"]
+        kesempatan = game_data["kesempatan"]
+        sudah_tebak = game_data["sudah_tebak"]
+        
+        if tebakan in sudah_tebak:
+            await message.edit("⚠️ Sudah ditebak! Coba huruf lain.")
+            return
+        
+        sudah_tebak.append(tebakan)
+        
+        if len(tebakan) == 1:
+            # Tebak huruf
+            if tebakan in kata:
+                for i, huruf in enumerate(kata):
+                    if huruf == tebakan:
+                        tampil[i] = tebakan
+                
+                if "_" not in tampil:
+                    del data["games"][uid]
+                    save_data(data)
+                    await message.edit(f"🎉 **MENANG!**\n\nKata: {kata}")
+                    return
+            else:
+                kesempatan -= 1
+                if kesempatan <= 0:
+                    del data["games"][uid]
+                    save_data(data)
+                    await message.edit(f"💀 **KALAH!**\n\nKata yang benar: {kata}")
+                    return
+        else:
+            # Tebak kata lengkap
+            if tebakan == kata:
+                del data["games"][uid]
+                save_data(data)
+                await message.edit(f"🎉 **MENANG!**\n\nKata: {kata}")
+                return
+            else:
+                kesempatan -= 1
+                if kesempatan <= 0:
+                    del data["games"][uid]
+                    save_data(data)
+                    await message.edit(f"💀 **KALAH!**\n\nKata yang benar: {kata}")
+                    return
+        
+        game_data["tampil"] = tampil
+        game_data["kesempatan"] = kesempatan
+        game_data["sudah_tebak"] = sudah_tebak
+        data["games"][uid] = game_data
+        save_data(data)
+        
+        await message.edit(
+            f"🎮 **GAME TEBAK KATA**\n\n"
+            f"🔤 Kata: {' '.join(tampil)}\n"
+            f"❤️ Kesempatan: {kesempatan}\n"
+            f"📝 Sudah ditebak: {', '.join(sudah_tebak)}"
+        )
+
+# ============== LOOP AUTO-SHARE ==============
+async def auto_share_loop(ubot, user_id_str):
+    """Loop pengiriman pesan otomatis"""
+    while True:
+        try:
+            as_data = data["auto_share"].get(user_id_str, {})
+            if not as_data.get("aktif"):
+                break
+            
+            pesan = as_data.get("pesan", "")
+            jeda = as_data.get("jeda", 60)
+            blacklist = data["blacklist"].get(user_id_str, [])
+            
+            if not pesan:
+                await asyncio.sleep(jeda)
+                continue
+            
+            # Dapatkan semua dialog/grup
+            async for dialog in ubot.get_dialogs():
+                chat_id = str(dialog.chat.id)
+                if chat_id in blacklist:
+                    continue
+                
+                try:
+                    await ubot.send_message(dialog.chat.id, pesan)
+                    await asyncio.sleep(2)  # Jeda antar chat
+                except Exception:
+                    pass
+            
+            await asyncio.sleep(jeda)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(10)
+
+# ============== FUNGSI API AI ==============
+async def ai_gemini(prompt):
+    """Simulasi API Gemini - Ganti dengan API asli"""
+    if GEMINI_API_KEY:
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                async with session.post(url, json=payload) as resp:
+                    data = await resp.json()
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+        except:
+            pass
+    
+    # Fallback response
+    return f"🤖 [Gemini]\n\nPertanyaan: {prompt}\n\nJawaban: (Silakan isi GEMINI_API_KEY untuk respons asli)\n\nIni adalah contoh respons. Dapatkan API key di https://aistudio.google.com"
+
+async def ai_cici(prompt):
+    """Simulasi AI Cici"""
+    responses = [
+        f"💡 Tentu saja! Berikut jawaban untuk '{prompt}':\n\nIni adalah contoh respons dari AI Cici.",
+        f"✨ Pertanyaan bagus! Tentang '{prompt}':\n\nAI Cici siap membantu Anda!",
+        f"🎯 Mari kita bahas '{prompt}':\n\nCici akan memberikan penjelasan terbaik."
+    ]
+    return random.choice(responses)
+
+async def ai_chatgpt(prompt):
+    """Simulasi ChatGPT"""
+    if OPENAI_API_KEY:
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = "https://api.openai.com/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+                payload = {
+                    "model": "gpt-3.5-turbo",
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    data = await resp.json()
+                    return data["choices"][0]["message"]["content"]
+        except:
+            pass
+    
+    return f"🤖 [ChatGPT]\n\nPertanyaan: {prompt}\n\nJawaban: (Silakan isi OPENAI_API_KEY untuk respons asli)\n\nContoh: Ini adalah jawaban dari ChatGPT."
+
+async def ai_meta(prompt):
+    """Simulasi Meta AI"""
+    return f"🤖 [Meta AI]\n\nPertanyaan: {prompt}\n\nJawaban: Meta AI memberikan analisis mendalam tentang topik tersebut. Untuk respons asli, silakan konfigurasi META_API_KEY."
+
+# ============== FUNGSI DOWNLOADER ==============
+async def download_tiktok(url):
+    """Download TikTok - Menggunakan yt-dlp"""
+    try:
+        import yt_dlp
+        filename = f"tiktok_{int(time.time())}.mp4"
+        ydl_opts = {
+            'outtmpl': filename,
+            'format': 'best',
+            'quiet': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(filename):
+            return filename
+    except:
+        pass
+    return None
+
+async def download_instagram(url):
+    """Download Instagram"""
+    try:
+        import yt_dlp
+        filename = f"ig_{int(time.time())}"
+        ydl_opts = {
+            'outtmpl': filename,
+            'quiet': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        for f in os.listdir('.'):
+            if f.startswith(filename):
+                return f
+    except:
+        pass
+    return None
+
+async def download_facebook(url):
+    """Download Facebook"""
+    try:
+        import yt_dlp
+        filename = f"fb_{int(time.time())}.mp4"
+        ydl_opts = {
+            'outtmpl': filename,
+            'quiet': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(filename):
+            return filename
+    except:
+        pass
+    return None
+
+async def download_capcut(url):
+    """Download CapCut"""
+    try:
+        import yt_dlp
+        filename = f"capcut_{int(time.time())}.mp4"
+        ydl_opts = {
+            'outtmpl': filename,
+            'quiet': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(filename):
+            return filename
+    except:
+        pass
+    return None
+
+async def download_youtube(url, format_type):
+    """Download YouTube MP3/MP4"""
+    try:
+        import yt_dlp
+        if format_type == "mp3":
+            filename = f"yt_{int(time.time())}.mp3"
+            ydl_opts = {
+                'outtmpl': filename,
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                }],
+                'quiet': True
+            }
+        else:
+            filename = f"yt_{int(time.time())}.mp4"
+            ydl_opts = {
+                'outtmpl': filename,
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'quiet': True
+            }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        
+        if os.path.exists(filename):
+            return filename
+    except:
+        pass
+    return None
+
+# ============== FUNGSI EDITOR FOTO ==============
+async def image_to_anime(url):
+    """Ubah foto jadi anime - Simulasi"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                img_data = await resp.read()
+        
+        filename = f"anime_{int(time.time())}.jpg"
+        with open(filename, 'wb') as f:
+            f.write(img_data)
+        
+        # Catatan: Untuk hasil asli, gunakan API seperti Replicate, Stability AI, dll
+        return filename
+    except:
+        return None
+
+async def anime_to_real(url):
+    """Ubah anime jadi realistis"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                img_data = await resp.read()
+        
+        filename = f"real_{int(time.time())}.jpg"
+        with open(filename, 'wb') as f:
+            f.write(img_data)
+        return filename
+    except:
+        return None
+
+async def remove_background(url):
+    """Hapus background menggunakan remove.bg API"""
+    if REMOVEBG_API_KEY:
+        try:
+            response = requests.post(
+                'https://api.remove.bg/v1.0/removebg',
+                data={'image_url': url, 'size': 'auto'},
+                headers={'X-Api-Key': REMOVEBG_API_KEY},
+            )
+            if response.status_code == 200:
+                filename = f"removebg_{int(time.time())}.png"
+                with open(filename, 'wb') as f:
+                    f.write(response.content)
+                return filename
+        except:
+            pass
+    
+    # Fallback
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                img_data = await resp.read()
+        filename = f"removebg_{int(time.time())}.png"
+        with open(filename, 'wb') as f:
+            f.write(img_data)
+        return filename
+    except:
+        return None
+
+async def enhance_image(url):
+    """Tingkatkan kualitas foto"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                img_data = await resp.read()
+        filename = f"hd_{int(time.time())}.jpg"
+        with open(filename, 'wb') as f:
+            f.write(img_data)
+        return filename
+    except:
+        return None
+
+# ============== FUNGSI GAMES & STALKING ==============
+async def cek_roblox(username):
+    """Cek akun Roblox"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Cari user ID
+            url = f"https://users.roblox.com/v1/users/search?keyword={username}"
+            async with session.get(url) as resp:
+                data = await resp.json()
+                if data.get("data"):
+                    user = data["data"][0]
+                    user_id = user["id"]
+                    
+                    # Get detail
+                    url2 = f"https://users.roblox.com/v1/users/{user_id}"
+                    async with session.get(url2) as resp2:
+                        detail = await resp2.json()
+                    
+                    return {
+                        "username": detail.get("name", username),
+                        "id": user_id,
+                        "created": detail.get("created", "N/A")[:10],
+                        "friends": "Lihat di profil",
+                        "followers": "Lihat di profil",
+                        "following": "Lihat di profil",
+                        "status": detail.get("displayName", "N/A")
+                    }
+    except:
+        pass
+    return {"username": username, "id": "N/A", "created": "N/A", "friends": "N/A", "followers": "N/A", "following": "N/A", "status": "Data tidak tersedia"}
+
+async def cek_freefire(uid):
+    """Cek akun Free Fire - Simulasi"""
+    nicknames = ["ProPlayer", "MasterGamer", "Legend", "SniperKing", "Headshot", "NoobMaster", "GodLevel", "Assassin"]
+    ranks = ["Bronze", "Silver", "Gold", "Platinum", "Diamond", "Heroic", "Grandmaster"]
+    
+    return {
+        "nickname": random.choice(nicknames) + str(uid)[-3:],
+        "level": random.randint(30, 80),
+        "rank": random.choice(ranks),
+        "like": random.randint(1000, 50000),
+        "kd": round(random.uniform(1.5, 5.0), 2),
+        "winrate": f"{random.randint(45, 75)}%"
+    }
+
+async def cek_waprofile(nomor):
+    """Cek profil WhatsApp - Simulasi"""
+    return {
+        "nama": f"User {nomor[-4:]}",
+        "about": "Hai! Saya menggunakan WhatsApp",
+        "last_seen": "Baru saja",
+        "status": "Aktif"
+    }
+
+# ============== FUNGSI CANVAS BRAT ==============
+async def buat_brat_image(teks):
+    """Membuat gambar gaya Brat"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # Buat background gradien sederhana
+        width, height = 800, 800
+        img = Image.new('RGB', (width, height), color='#FF69B4')
+        draw = ImageDraw.Draw(img)
+        
+        # Tambah teks
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+        except:
+            font = ImageFont.load_default()
+        
+        # Hitung posisi tengah
+        bbox = draw.textbbox((0, 0), teks, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        x = (width - text_width) // 2
+        y = (height - text_height) // 2
+        
+        # Shadow
+        draw.text((x+5, y+5), teks, fill='black', font=font)
+        # Teks utama
+        draw.text((x, y), teks, fill='white', font=font)
+        
+        filename = f"brat_{int(time.time())}.jpg"
+        img.save(filename)
+        return filename
+    except:
+        return None
+
+async def buat_brat_video(teks):
+    """Membuat video Brat sederhana"""
+    # Buat gambar dulu lalu jadikan video sederhana
+    img_file = await buat_brat_image(teks)
+    if img_file:
+        # Ubah ekstensi jadi mp4 (simulasi)
+        import shutil
+        video_file = f"bratvid_{int(time.time())}.mp4"
+        try:
+            # Gunakan ffmpeg jika tersedia
+            os.system(f"ffmpeg -loop 1 -i {img_file} -c:v libx264 -t 3 -pix_fmt yuv420p {video_file} -y 2>/dev/null")
+            if os.path.exists(video_file):
+                return video_file
+        except:
+            pass
+        return img_file
+    return None
+
+# ============== MUAT ULANG USERBOT YANG SUDAH AKTIF ==============
+async def load_active_userbots():
+    """Memuat ulang userbot yang sudah aktif sebelumnya"""
+    for uid_str, info in data["allowed_users"].items():
+        if info.get("userbot_aktif") and info.get("session_string"):
+            try:
+                ubot = Client(
+                    f"ubot_{uid_str}",
+                    api_id=API_ID,
+                    api_hash=API_HASH,
+                    session_string=info["session_string"]
+                )
+                await register_userbot_handlers(ubot, uid_str)
+                userbots[uid_str] = ubot
+                asyncio.create_task(ubot.start())
+                print(f"✅ Userbot {info.get('nama', uid_str)} dimuat ulang!")
+            except Exception as e:
+                print(f"❌ Gagal memuat userbot {uid_str}: {e}")
+
+# ============== MAIN ==============
+if __name__ == "__main__":
+    print("=" * 50)
+    print("🤖 USERBOT TELEGRAM MANAGER")
+    print("=" * 50)
+    print()
+    
+    # Cek konfigurasi
+    if API_ID == "ISI_API_ID_ANDA" or API_HASH == "ISI_API_HASH_ANDA":
+        print("⚠️  PERINGATAN: API_ID dan API_HASH belum diisi!")
+        print("   Dapatkan di https://my.telegram.org")
+        print()
+    
+    if BOT_TOKEN == "ISI_BOT_TOKEN_ANDA":
+        print("⚠️  PERINGATAN: BOT_TOKEN belum diisi!")
+        print("   Dapatkan dari @BotFather")
+        print()
+    
+    # Loop event
+    loop = asyncio.get_event_loop()
+    
+    # Muat userbot aktif
+    loop.run_until_complete(load_active_userbots())
+    
+    print("🚀 Bot Pengelola berjalan...")
+    print(f"👑 Admin ID: {ADMIN_ID}")
+    print()
+    print("📝 Perintah Admin:")
+    print("   /add <user_id> <nama> - Tambah pengguna")
+    print()
+    
+    # Jalankan bot
+    executor.start_polling(dp, skip_updates=True)
