@@ -1,11 +1,12 @@
 {
   "name": "yubu",
   "version": "1.0.0",
+  "description": "Yubu Userbot",
   "main": "script-userbotayramlbb-vps",
   "scripts": {
-    "start": "node script-userbotayramlbb-vps"
+    "start": "python3 script-userbotayramlbb-vps",
+    "install-deps": "pip install --break-system-packages -r requirements.txt"
   },
-  "dependencies": {
-    ...
-  }
+  "author": "wallz0q",
+  "license": "ISC"
 }
