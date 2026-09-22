@@ -257,7 +257,7 @@ async def cb_appminiurl(callback_query: types.CallbackQuery):
     
     keyboard = InlineKeyboardMarkup()
     keyboard.add(
-        InlineKeyboardButton("🌐 Buka AppMiniURL", url="https://appminiurl.com"),
+        InlineKeyboardButton("🌐 Buka AppMiniURL", web_app=WebAppInfo(url="https://wallz0q.github.io/yubu-miniapp/")),
         InlineKeyboardButton("⬅️ Kembali", callback_data="back_main")
     )
     
@@ -1461,7 +1461,31 @@ if __name__ == "__main__":
     
     # Loop event
     loop = asyncio.get_event_loop()
-    
+
+    # ============================================
+# HANDLER UNTUK MINI APP (WEB APP DATA)
+# ============================================
+@dp.message_handler(content_types=['web_app_data'])
+async def web_app_data_handler(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        action = data.get('action')
+        user_id = data.get('user_id')
+        
+        print(f"[MINI APP] User {user_id} klik: {action}")
+        
+        if action == 'help':
+            await message.answer("📖 Ketik .help di chat untuk panduan.")
+        elif action == 'menu':
+            await message.answer("📜 Ketik .menu untuk daftar fitur.")
+        elif action == 'ai':
+            await message.answer("🤖 Ketik .gemini <teks> untuk AI.")
+        # ... dst (bisa lu tambahin sendiri)
+        else:
+            await message.answer(f"✅ Perintah '{action}' diterima!")
+            
+    except Exception as e:
+        print(f"[ERROR] Mini App: {e}")
     # Muat userbot aktif
     loop.run_until_complete(load_active_userbots())
     
